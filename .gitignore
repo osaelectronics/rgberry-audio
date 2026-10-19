@@ -1,4 +1,6 @@
 rgberry-audio
+*.so
+test/plugin_test
 test/encode_check
 test/pio_sim
 test/sim_out.f32

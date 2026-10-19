@@ -14,7 +14,7 @@ fi
 rm -f /etc/systemd/system/rgberry-audio.service /etc/systemd/system/rgberry-audio-select.service \
       /etc/systemd/system/replay.service.d/10-rgberry-audio.conf /etc/asound.conf.rgberry-none \
       /usr/local/bin/rgberry-audio /usr/local/sbin/rgberry-audio-select \
-      /etc/modprobe.d/rgberry-audio.conf /usr/lib/*/alsa-lib/libasound_module_pcm_rgberry.so /dev/shm/rgberry-audio
-rm -rf /etc/rgberry-audio
+      /etc/modprobe.d/rgberry-audio.conf /usr/lib/*/alsa-lib/libasound_module_pcm_rgberry.so /usr/lib/*/alsa-lib/libasound_module_ctl_rgberry.so /dev/shm/rgberry-audio
+rm -rf /etc/rgberry-audio /var/lib/rgberry-audio
 systemctl daemon-reload
 echo "rgberry-audio desinstalado (se conserva /etc/default/rgberry-audio)."

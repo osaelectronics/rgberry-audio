@@ -16,7 +16,7 @@ curl -fsSL https://raw.githubusercontent.com/osaelectronics/rgberry-audio/main/g
 Descarga el código, lo compila e instala el servicio. En RePlay OS no hay que
 tocar ningún menú: el audio sale por el SCART con la opción por defecto.
 
-Opciones: una versión concreta con `... | sudo RGBERRY_REF=v2.4.0 bash`, o
+Opciones: una versión concreta con `... | sudo RGBERRY_REF=v3.1.0 bash`, o
 un tono de prueba al terminar con `... | sudo bash -s -- --test`.
 
 Instalación manual desde una copia del repositorio: `sudo ./install.sh`.
@@ -59,6 +59,11 @@ aplicación (RePlay/SDL, ALSA default…)
   de los emuladores produjera tirones.)
 * `pcm.rgberry_hw` acepta S16_LE estéreo a 48 kHz; `rgberry` / `default`
   añaden conversión de formato y frecuencia. Una sola aplicación a la vez.
+* **Volumen**: control de mezclador "PCM" (volumen 0–100 % + silencio) con un
+  plugin de control ALSA (`libasound_module_ctl_rgberry.so`). Aparece en
+  `alsamixer`, `amixer` y en el volumen de EmulationStation (tarjeta `default`,
+  dispositivo `PCM`). Curva cúbica (50 % ≈ −18 dB); lo aplica el daemon con
+  rampa por muestra y se guarda en `/var/lib/rgberry-audio/volume`.
 * Si el daemon no está en marcha, el plugin sigue el tiempo por su cuenta y la
   aplicación nunca se bloquea.
 * **Portadora 192 kHz**, ~1042 ciclos de 200 MHz por periodo (≈10 bits), noise
@@ -103,14 +108,13 @@ sudo systemctl stop rgberry-audio
 sudo rgberry-audio -d                      # onda cuadrada 1 kHz, sin DMA (prueba de pines)
 sudo rgberry-audio -T                      # autotest de 3 s con informe
 sudo rgberry-audio -t 1000 --tone-ch L -v  # tono por el canal izquierdo
+amixer sset PCM 70%                        # volumen
 ```
 
 ## Pendiente de validar en hardware
 
 * Ajuste del nivel (`-g`) para igualar el de la Pi 4 con tu filtro RC.
 * Modos entrelazados en RePlay (comparten el PIO con su "interlace fixer").
-* Volumen: no hay control de mezclador propio; RePlay ajusta el volumen en
-  su propio audio.
 
 ## Licencias
 

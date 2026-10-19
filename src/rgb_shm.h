@@ -18,7 +18,7 @@
 #include <sys/stat.h>
 
 #define RGB_SHM_NAME     "/rgberry-audio"
-#define RGB_SHM_MAGIC    0x52474232u            /* "RGB2" (layout version) */
+#define RGB_SHM_MAGIC    0x52474233u            /* "RGB3" (layout version) */
 #define RGB_RATE         48000u
 #define RGB_RING_FRAMES  65536u                 /* power of two, >= 4096 x 16 */
 #define RGB_DAEMON_STALE_NS 300000000ull        /* daemon considered gone */
@@ -30,7 +30,9 @@ typedef struct {
     _Atomic uint64_t rd;          /* frames consumed by the daemon (total) */
     _Atomic uint64_t daemon_ns;   /* CLOCK_MONOTONIC of the daemon's last period */
     _Atomic uint32_t running;     /* plugin stream started */
-    uint32_t         pad;
+    _Atomic int32_t  volume;      /* mixer "PCM": 0..100 % */
+    _Atomic int32_t  mute;        /* mixer "PCM" switch off */
+    _Atomic uint32_t ctl_serial;  /* bumped on every mixer change */
     int16_t          ring[RGB_RING_FRAMES * 2];   /* interleaved S16 L,R */
 } rgb_shm_t;
 
@@ -41,9 +43,23 @@ static inline uint64_t rgb_now_ns(void)
     return (uint64_t)t.tv_sec * 1000000000ull + (uint64_t)t.tv_nsec;
 }
 
+/* An older daemon/plugin may have left a segment with another layout: start
+ * over with a fresh one (callers attach again right after). */
+static inline int rgb_shm_layout_ok(void)
+{
+    int fd = shm_open(RGB_SHM_NAME, O_RDONLY | O_CLOEXEC, 0);
+    if (fd < 0) return 1;
+    uint32_t m = 0;
+    int ok = pread(fd, &m, sizeof m, 0) != (ssize_t)sizeof m || m == 0 ||
+             m == RGB_SHM_MAGIC || m == 0xffffffffu;
+    close(fd);
+    return ok;
+}
+
 /* Create or attach.  Either side may come first. */
 static inline rgb_shm_t *rgb_shm_attach(void)
 {
+    if (!rgb_shm_layout_ok()) shm_unlink(RGB_SHM_NAME);
     int fd = shm_open(RGB_SHM_NAME, O_RDWR | O_CREAT | O_CLOEXEC, 0666);
     if (fd < 0) return NULL;
     (void)fchmod(fd, 0666);                        /* ignore umask */
@@ -61,6 +77,9 @@ static inline rgb_shm_t *rgb_shm_attach(void)
         atomic_store(&s->rd, 0);
         atomic_store(&s->daemon_ns, 0);
         atomic_store(&s->running, 0);
+        atomic_store(&s->volume, 100);
+        atomic_store(&s->mute, 0);
+        atomic_store(&s->ctl_serial, 0);
         atomic_store(&s->magic, RGB_SHM_MAGIC);
     } else {
         for (int i = 0; atomic_load(&s->magic) != RGB_SHM_MAGIC; i++) {
@@ -68,6 +87,8 @@ static inline rgb_shm_t *rgb_shm_attach(void)
                 s->frames = RGB_RING_FRAMES;
                 atomic_store(&s->wr, 0); atomic_store(&s->rd, 0);
                 atomic_store(&s->running, 0);
+                atomic_store(&s->volume, 100);
+                atomic_store(&s->mute, 0);
                 atomic_store(&s->magic, RGB_SHM_MAGIC);
                 break;
             }

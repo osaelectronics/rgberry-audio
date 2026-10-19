@@ -90,6 +90,7 @@ if [ $IS_PI5 = 1 ]; then
     fi
     aplay -L 2>/dev/null | grep -qx rgberry_hw || \
         { [ -n "$(ls /usr/lib/*/alsa-lib/libasound_module_pcm_rgberry.so 2>/dev/null)" ] || die "no se instalo el plugin ALSA"; }
+    [ -n "$(ls /usr/lib/*/alsa-lib/libasound_module_ctl_rgberry.so 2>/dev/null)" ] || die "no se instalo el plugin de mezclador ALSA"
 
     if [ "$1" = "--test" ]; then
         systemctl stop rgberry-audio.service 2>/dev/null || true

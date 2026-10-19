@@ -39,7 +39,7 @@
 #include "dpwm.h"
 #include "rgb_shm.h"
 
-#define VERSION        "3.0.0"
+#define VERSION        "3.1.0"
 #define SM             0
 #define NIN            256                   /* input frames per period (5.3 ms) */
 #define PERIOD_WORDS   (NIN * DPWM_OSR)      /* 1024 words = 4096 bytes          */
@@ -240,6 +240,66 @@ static bool alsa_read_period(int16_t *buf)
 }
 
 /*
+ * Mixer "PCM" (ctl plugin): volume 0..100 % with a cubic taper (50 % = -18 dB),
+ * mute switch.  The gain glides per sample to avoid zipper noise.
+ */
+#define VOLUME_FILE "/var/lib/rgberry-audio/volume"
+static double   vol_gain = 1.0;
+static uint32_t vol_saved_serial;
+static double   vol_change_ms;
+
+static double volume_target(void)
+{
+    if (atomic_load(&shm->mute)) return 0.0;
+    double v = atomic_load(&shm->volume) / 100.0;
+    return v * v * v;
+}
+
+static void apply_volume(int16_t *buf)
+{
+    double tgt = volume_target();
+    if (tgt == 1.0 && vol_gain == 1.0) return;
+    double step = (tgt - vol_gain) / NIN;           /* reach target within one period */
+    for (int i = 0; i < NIN; i++) {
+        vol_gain += step;
+        buf[2 * i]     = (int16_t)lrint(buf[2 * i]     * vol_gain);
+        buf[2 * i + 1] = (int16_t)lrint(buf[2 * i + 1] * vol_gain);
+    }
+    vol_gain = tgt;
+}
+
+static void volume_load(void)
+{
+    FILE *f = fopen(VOLUME_FILE, "r");
+    int v, m;
+    if (!f) return;
+    if (fscanf(f, "%d %d", &v, &m) == 2 && v >= 0 && v <= 100) {
+        atomic_store(&shm->volume, v);
+        atomic_store(&shm->mute, m ? 1 : 0);
+        atomic_fetch_add(&shm->ctl_serial, 1);
+    }
+    fclose(f);
+    vol_saved_serial = atomic_load(&shm->ctl_serial);
+}
+
+/* save 2 s after the last change (the SD card does not need every step) */
+static void volume_save(bool force)
+{
+    uint32_t s = atomic_load(&shm->ctl_serial);
+    if (s == vol_saved_serial) { vol_change_ms = 0; return; }
+    if (!vol_change_ms) vol_change_ms = now_ms();
+    if (!force && now_ms() - vol_change_ms < 2000) return;
+    mkdir("/var/lib/rgberry-audio", 0755);
+    FILE *f = fopen(VOLUME_FILE ".tmp", "w");
+    if (f) {
+        fprintf(f, "%d %d\n", (int)atomic_load(&shm->volume), (int)atomic_load(&shm->mute));
+        if (fclose(f) == 0) rename(VOLUME_FILE ".tmp", VOLUME_FILE);
+    }
+    vol_saved_serial = s;
+    vol_change_ms = 0;
+}
+
+/*
  * Default source: the shared ring filled by the "rgberry" ALSA plugin inside
  * the application.  We take one period every time the DMA accepts one, so the
  * application's hardware pointer advances exactly at the PIO's pace.
@@ -263,6 +323,7 @@ static bool shm_read_period(int16_t *buf)
     }
     if (n < NIN) { memset(buf + 2 * n, 0, (NIN - n) * 4); starved++; }
     atomic_store_explicit(&shm->rd, rd + n, memory_order_release);
+    apply_volume(buf);
     return n > 0;
 }
 
@@ -394,7 +455,7 @@ static int run(double seconds)
     for (;;) {
         bool real;
         if (opt_tone > 0) { tone_period(in); real = true; }
-        else if (shm) real = shm_read_period(in);
+        else if (shm) { real = shm_read_period(in); if (!(periods & 63)) volume_save(false); }
         else real = alsa_read_period(in);
         if (!real) silent_periods++;
 
@@ -571,6 +632,7 @@ int main(int argc, char **argv)
     else if (opt_tone <= 0) {
         shm = rgb_shm_attach();
         if (!shm) { logmsg("rgberry-audio: cannot create shared memory %s\n", RGB_SHM_NAME); return 1; }
+        volume_load();
     }
     if (pio_setup() < 0) return 1;
 
@@ -582,6 +644,7 @@ int main(int argc, char **argv)
     pthread_t wd; pthread_create(&wd, NULL, watchdog, NULL);
     int r = run(0);
     heartbeat = 0;
+    if (shm) volume_save(true);
     pio_shutdown();
     if (pcm) snd_pcm_close(pcm);
     logmsg("rgberry-audio: stopped\n");
