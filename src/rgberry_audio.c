@@ -38,7 +38,7 @@
 #include "rp1_pio_if.h"
 #include "dpwm.h"
 
-#define VERSION        "2.4.0"
+#define VERSION        "2.4.1"
 #define SM             0
 #define NIN            256                   /* input frames per period (5.3 ms) */
 #define PERIOD_WORDS   (NIN * DPWM_OSR)      /* 1024 words = 4096 bytes          */
@@ -81,7 +81,7 @@ static volatile double  heartbeat;            /* last progress, ms */
 
 static double  avail_ema = -1, integ;
 static double  tone_phase;
-static unsigned long long periods, underruns, read_errors, silent_periods, late_reads;
+static unsigned long long periods, underruns, read_errors, silent_periods, late_reads, resyncs;
 static double  wmin = 1e9, wmax, wsum;
 
 static void logmsg(const char *fmt, ...)
@@ -211,6 +211,16 @@ static bool alsa_read_period(int16_t *buf)
     if (!pcm || got < NIN) return got > 0;
 
     snd_pcm_sframes_t av = snd_pcm_avail_update(pcm);
+    /* A frontend that opens/closes its output (RePlay does it on every game
+     * start/exit) makes snd-aloop re-time and hand us a burst.  Absorbing it
+     * at <= 800 ppm would take tens of seconds of extra latency: drop the
+     * excess at once instead. */
+    if (av > TARGET_BACKLOG + 3 * NIN) {
+        snd_pcm_forward(pcm, av - TARGET_BACKLOG);
+        resyncs++;
+        av = snd_pcm_avail_update(pcm);
+        avail_ema = TARGET_BACKLOG;
+    }
     if (av >= 0) {
         avail_ema += 0.01 * ((double)av - avail_ema);
         double err = avail_ema - TARGET_BACKLOG;         /* >0: PIO too slow */
@@ -381,9 +391,9 @@ static int run(double seconds)
 
         if (opt_verbose && now_ms() - t_stat >= 1000) {
             logmsg("rgberry-audio: %llu periods/s, write %.1f..%.1f ms, ppm %+.1f, "
-                   "backlog %.0f, late %llu, overruns %llu, underruns %llu, silent %llu, "
+                   "backlog %.0f, late %llu, resyncs %llu, overruns %llu, underruns %llu, silent %llu, "
                    "clips %llu\n",
-                   periods - last_periods, wmin, wmax, enc.ppm, avail_ema, late_reads,
+                   periods - last_periods, wmin, wmax, enc.ppm, avail_ema, late_reads, resyncs,
                    read_errors, underruns, silent_periods, (unsigned long long)enc.clips);
             wmin = 1e9; wmax = 0;
             last_periods = periods;
