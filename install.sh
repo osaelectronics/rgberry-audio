@@ -48,7 +48,7 @@ if grep -q "RGBERRY-AUDIO-PI5" /etc/asound.conf 2>/dev/null && [ -e /etc/asound.
     cp -a /etc/asound.conf.rgberry-orig /etc/asound.conf
 fi
 install -D -m 644 config/asound-pi5.conf      /etc/rgberry-audio/asound-pi5.conf
-install -D -m 644 config/modprobe-rgberry.conf /etc/modprobe.d/rgberry-audio.conf
+rm -f /etc/modprobe.d/rgberry-audio.conf             # 1.x/2.x loopback card
 [ -e /etc/default/rgberry-audio ] || install -D -m 644 config/rgberry-audio.default /etc/default/rgberry-audio
 install -D -m 755 scripts/rgberry-audio-select /usr/local/sbin/rgberry-audio-select
 install -D -m 644 systemd/rgberry-audio.service        /etc/systemd/system/rgberry-audio.service
@@ -82,12 +82,14 @@ systemctl enable rgberry-audio-select.service rgberry-audio.service >/dev/null 2
 
 if [ $IS_PI5 = 1 ]; then
     systemctl stop rgberry-audio.service 2>/dev/null || true
-    # reload the loopback card with the new id if an older install loaded it
-    if [ -e /proc/asound/RGBerry ]; then
-        modprobe -r snd-aloop 2>/dev/null || NEED_REBOOT=1
-    fi
     systemctl restart rgberry-audio-select.service
-    [ -e /proc/asound/sndrpihifiberry ] || NEED_REBOOT=1
+    # 1.x/2.x used a snd-aloop card; not needed any more
+    if lsmod 2>/dev/null | grep -q '^snd_aloop'; then
+        systemctl is-active --quiet replay.service && systemctl stop replay.service && RESTART_REPLAY=1
+        modprobe -r snd-aloop 2>/dev/null || true
+    fi
+    aplay -L 2>/dev/null | grep -qx rgberry_hw || \
+        { [ -n "$(ls /usr/lib/*/alsa-lib/libasound_module_pcm_rgberry.so 2>/dev/null)" ] || die "no se instalo el plugin ALSA"; }
 
     if [ "$1" = "--test" ]; then
         systemctl stop rgberry-audio.service 2>/dev/null || true
@@ -108,7 +110,7 @@ if [ $IS_PI5 = 1 ]; then
         fi
     fi
     if [ "$REPLAY" = 1 ]; then
-        if [ "$NEED_REBOOT" != 1 ] && systemctl is-active --quiet replay.service; then
+        if [ "$RESTART_REPLAY" = 1 ] || systemctl is-active --quiet replay.service; then
             systemctl restart replay.service
         fi
         say "RePlay OS: el audio sale por el SCART con 'Primary HDMI' (por defecto)"

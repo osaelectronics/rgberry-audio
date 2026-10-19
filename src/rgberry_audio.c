@@ -5,8 +5,8 @@
  * GPIO18/19.  The Pi 5 (RP1) AUDIO_OUT block only reaches GPIO12/13, so this
  * daemon recreates stereo PWM audio on GPIO18/19 with the RP1 PIO:
  *
- *   apps -> ALSA "default" -> softvol -> dmix -> snd-aloop (card sndrpihifiberry)
- *        -> this daemon (capture side) -> noise-shaped dual PWM -> PIO SM0
+ *   apps -> ALSA "default" / RePlay -> "rgberry" ALSA plugin (shared ring)
+ *        -> this daemon -> noise-shaped dual PWM -> PIO SM0 + DMA
  *
  * One state machine plays a continuous stream of frame words.  On kernels
  * with cyclic TX DMA (rpi-6.18+) the DMA loops over a ring of periods with
@@ -37,8 +37,9 @@
 #include "piolib.h"
 #include "rp1_pio_if.h"
 #include "dpwm.h"
+#include "rgb_shm.h"
 
-#define VERSION        "2.4.1"
+#define VERSION        "3.0.0"
 #define SM             0
 #define NIN            256                   /* input frames per period (5.3 ms) */
 #define PERIOD_WORDS   (NIN * DPWM_OSR)      /* 1024 words = 4096 bytes          */
@@ -59,7 +60,9 @@ struct rp1_pio_handle_view { struct pio_instance base; const char *devname; int 
 static int pio_fd(PIO p) { return ((struct rp1_pio_handle_view *)p)->fd; }
 
 /* ---------------------------------------------------------------- options */
-static const char *opt_device = "hw:sndrpihifiberry,1,0";
+static const char *opt_device = NULL;       /* legacy ALSA capture source */
+static rgb_shm_t  *shm;                     /* default source: rgberry plugin */
+static unsigned long long starved;
 static unsigned    opt_gpio   = 18;
 static double      opt_gain   = 0.46;
 static int         opt_swap   = 0;
@@ -236,6 +239,33 @@ static bool alsa_read_period(int16_t *buf)
     return true;
 }
 
+/*
+ * Default source: the shared ring filled by the "rgberry" ALSA plugin inside
+ * the application.  We take one period every time the DMA accepts one, so the
+ * application's hardware pointer advances exactly at the PIO's pace.
+ */
+static bool shm_read_period(int16_t *buf)
+{
+    atomic_store(&shm->daemon_ns, rgb_now_ns());
+    if (!atomic_load(&shm->running)) {
+        memset(buf, 0, NIN * 4);
+        return false;
+    }
+    uint64_t wr = atomic_load_explicit(&shm->wr, memory_order_acquire);
+    uint64_t rd = atomic_load(&shm->rd);
+    uint64_t avail = wr - rd;
+    if (avail > RGB_RING_FRAMES) { avail = 0; atomic_store(&shm->rd, wr); rd = wr; }
+    unsigned n = avail < NIN ? (unsigned)avail : NIN;
+    for (unsigned i = 0; i < n; i++) {
+        uint32_t k = (uint32_t)((rd + i) & (RGB_RING_FRAMES - 1));
+        buf[2 * i]     = shm->ring[2 * k];
+        buf[2 * i + 1] = shm->ring[2 * k + 1];
+    }
+    if (n < NIN) { memset(buf + 2 * n, 0, (NIN - n) * 4); starved++; }
+    atomic_store_explicit(&shm->rd, rd + n, memory_order_release);
+    return n > 0;
+}
+
 static void tone_period(int16_t *buf)
 {
     double a = 32767.0 * pow(10.0, opt_tone_db / 20.0);
@@ -364,6 +394,7 @@ static int run(double seconds)
     for (;;) {
         bool real;
         if (opt_tone > 0) { tone_period(in); real = true; }
+        else if (shm) real = shm_read_period(in);
         else real = alsa_read_period(in);
         if (!real) silent_periods++;
 
@@ -391,10 +422,10 @@ static int run(double seconds)
 
         if (opt_verbose && now_ms() - t_stat >= 1000) {
             logmsg("rgberry-audio: %llu periods/s, write %.1f..%.1f ms, ppm %+.1f, "
-                   "backlog %.0f, late %llu, resyncs %llu, overruns %llu, underruns %llu, silent %llu, "
+                   "backlog %.0f, late %llu, resyncs %llu, overruns %llu, underruns %llu, starved %llu, silent %llu, "
                    "clips %llu\n",
                    periods - last_periods, wmin, wmax, enc.ppm, avail_ema, late_reads, resyncs,
-                   read_errors, underruns, silent_periods, (unsigned long long)enc.clips);
+                   read_errors, underruns, starved, silent_periods, (unsigned long long)enc.clips);
             wmin = 1e9; wmax = 0;
             last_periods = periods;
             t_stat = now_ms();
@@ -480,7 +511,7 @@ static int run_diag(void)
 static void usage(void)
 {
     printf("rgberry-audio " VERSION " - PWM audio on GPIO18/19 for Raspberry Pi 5\n\n"
-           "  -D, --device NAME    ALSA capture device (default %s)\n"
+           "  -D, --device NAME    legacy: read from an ALSA capture device (loopback)\n"
            "  -p, --gpio N         first GPIO, L=N R=N+1 (default %u)\n"
            "  -g, --gain G         modulation depth at full scale, 0.05..0.48 (default %.2f)\n"
            "  -s, --swap           swap left/right\n"
@@ -491,7 +522,7 @@ static void usage(void)
            "  -T, --selftest       3 s streaming test with report\n"
            "      --no-cyclic      do not use cyclic DMA even if available\n"
            "  -v, --verbose        print statistics every second\n"
-           "  -h, --help\n", opt_device, opt_gpio, opt_gain);
+           "  -h, --help\n", opt_gpio, opt_gain);
 }
 
 int main(int argc, char **argv)
@@ -536,12 +567,17 @@ int main(int argc, char **argv)
     if (opt_diag) return run_diag();
     if (opt_selftest) return run_selftest();
 
-    if (opt_tone <= 0) alsa_open();               /* retried later if missing */
+    if (opt_tone <= 0 && opt_device) alsa_open();          /* legacy loopback mode */
+    else if (opt_tone <= 0) {
+        shm = rgb_shm_attach();
+        if (!shm) { logmsg("rgberry-audio: cannot create shared memory %s\n", RGB_SHM_NAME); return 1; }
+    }
     if (pio_setup() < 0) return 1;
 
     logmsg("rgberry-audio " VERSION ": GPIO%u=%s GPIO%u=%s, %s, DMA %s\n",
            opt_gpio, opt_swap ? "R" : "L", opt_gpio + 1, opt_swap ? "L" : "R",
-           opt_tone > 0 ? "test tone" : opt_device, cyclic ? "cyclic" : "queued");
+           opt_tone > 0 ? "test tone" : opt_device ? opt_device : "rgberry ALSA plugin",
+           cyclic ? "cyclic" : "queued");
 
     pthread_t wd; pthread_create(&wd, NULL, watchdog, NULL);
     int r = run(0);

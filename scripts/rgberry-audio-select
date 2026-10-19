@@ -1,7 +1,7 @@
 #!/bin/sh
 # RGBerry SCART - runs early at boot, before the frontend (RePlay) starts.
-#  Pi 5 : load the loopback card (id sndrpihifiberry -> "GPIO DAC" in RePlay)
-#         and append our ALSA block to the distro's own /etc/asound.conf.
+#  Pi 5 : append our ALSA block (rgberry plugin) to the distro's own
+#         /etc/asound.conf.
 #  other: make sure /etc/asound.conf is the untouched original.
 # The same SD card therefore keeps working when moved between Pi 4 and Pi 5.
 BEGIN="RGBERRY-AUDIO-PI5"
@@ -19,7 +19,6 @@ elif [ ! -e "$CONF" ] && [ ! -e "$ORIG" ]; then
 fi
 
 if grep -q "bcm2712" /proc/device-tree/compatible 2>/dev/null; then
-    modprobe snd-aloop
     { [ -e "$ORIG" ] && cat "$ORIG"; echo; cat "$PI5"; } > "$CONF.tmp" && mv -f "$CONF.tmp" "$CONF"
 else
     if [ -e "$ORIG" ]; then cp -a "$ORIG" "$CONF"
