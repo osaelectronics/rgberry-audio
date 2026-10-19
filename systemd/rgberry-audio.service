@@ -1,0 +1,17 @@
+[Unit]
+Description=RGBerry SCART audio for Raspberry Pi 5 (PIO PWM on GPIO18/19)
+After=rgberry-audio-select.service
+Requires=rgberry-audio-select.service
+# Only Pi 5 / CM5 have the RP1 PIO device; on Pi 2..4 this unit is skipped
+ConditionPathExists=/dev/pio0
+
+[Service]
+EnvironmentFile=-/etc/default/rgberry-audio
+ExecStart=/usr/local/bin/rgberry-audio $RGBERRY_ARGS
+Restart=on-failure
+RestartSec=2
+Nice=-10
+LimitMEMLOCK=infinity
+
+[Install]
+WantedBy=multi-user.target

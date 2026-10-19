@@ -1,0 +1,5 @@
+# Options for rgberry-audio (Raspberry Pi 5 only). See: rgberry-audio -h
+#   -s        swap left/right
+#   -g 0.40   lower output level (default 0.46, max 0.48)
+#   -v        log statistics to the journal
+RGBERRY_ARGS=""

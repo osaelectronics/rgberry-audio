@@ -1,0 +1,13 @@
+[Unit]
+Description=RGBerry SCART: set up audio for this Pi model
+DefaultDependencies=no
+After=local-fs.target systemd-modules-load.service
+Before=sound.target basic.target replay.service rgberry-audio.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/rgberry-audio-select
+
+[Install]
+WantedBy=sysinit.target

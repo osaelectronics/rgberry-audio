@@ -1,0 +1,17 @@
+; Reference source for the program hard-coded in dpwm.h (verified against
+; piolib's encoders by test/encode_check).  Loaded at offset 0, one SM,
+; autopull off.  The TX FIFO is fed by (cyclic) DMA with one word per frame.
+.program dpwm
+.wrap_target
+    pull noblock        ; next frame; if the FIFO is empty OSR = X (repeat)
+    mov x, osr          ; remember it
+    set pins, 3         ; frame start: L and R high
+    out y, 10           ; t1
+d1: jmp y--, d1         ; s0 = t1 + 3
+    out pins, 2         ; edge 1: pattern p1 (who stays high)
+    out y, 10           ; t2
+d2: jmp y--, d2         ; s1 = t2 + 3
+    set pins, 0         ; edge 2: both low
+    out y, 10           ; t3
+d3: jmp y--, d3         ; s2 = t3 + 5
+.wrap
