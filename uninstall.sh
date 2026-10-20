@@ -4,7 +4,7 @@ set -e
 [ "$(id -u)" = 0 ] || { echo "ejecuta con sudo"; exit 1; }
 systemctl disable --now rgberry-audio.service rgberry-audio-select.service 2>/dev/null || true
 # restore the original ALSA config if ours is active
-if grep -q RGBERRY-AUDIO-PI5 /etc/asound.conf 2>/dev/null; then
+if grep -qE "RGBERRY-AUDIO-PI[45]" /etc/asound.conf 2>/dev/null; then
     if [ -e /etc/asound.conf.rgberry-orig ]; then
         mv -f /etc/asound.conf.rgberry-orig /etc/asound.conf
     else

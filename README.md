@@ -16,7 +16,7 @@ curl -fsSL https://raw.githubusercontent.com/osaelectronics/rgberry-audio/main/g
 Descarga el código, lo compila e instala el servicio. En RePlay OS no hay que
 tocar ningún menú: el audio sale por el SCART con la opción por defecto.
 
-Opciones: una versión concreta con `... | sudo RGBERRY_REF=v3.1.0 bash`, o
+Opciones: una versión concreta con `... | sudo RGBERRY_REF=v3.2.0 bash`, o
 un tono de prueba al terminar con `... | sudo bash -s -- --test`.
 
 Instalación manual desde una copia del repositorio: `sudo ./install.sh`.
@@ -26,10 +26,17 @@ La misma tarjeta SD sigue funcionando en Pi 2/3/4: al arrancar,
 `rgberry-audio-select` instala la configuración ALSA de Pi 5 sólo en una Pi 5 y
 restaura la original en las demás; el servicio sólo arranca si existe `/dev/pio0`.
 
+**Una imagen para Pi 4 y Pi 5:** instala con `--pi4-alsa`
+(`curl ... | sudo bash -s -- --pi4-alsa`). En Pi 2..4, al arrancar, la tarjeta
+PWM del SoC ("Headphones", GPIO18/19 con `audremap`) pasa a ser el dispositivo y
+el mezclador por defecto, igual que `rgberry` en la Pi 5: EmulationStation y
+alsamixer funcionan igual en los dos modelos sin tocar nada.
+
 **Importante:** en `config.txt`, el overlay de audio de Pi 4 debe ir bajo `[pi4]`:
 
 ```
 [pi4]
+dtparam=audio=on
 dtoverlay=audremap,pins_18_19
 [all]
 ```

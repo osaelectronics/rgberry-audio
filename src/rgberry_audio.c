@@ -39,7 +39,7 @@
 #include "dpwm.h"
 #include "rgb_shm.h"
 
-#define VERSION        "3.1.0"
+#define VERSION        "3.2.0"
 #define SM             0
 #define NIN            256                   /* input frames per period (5.3 ms) */
 #define PERIOD_WORDS   (NIN * DPWM_OSR)      /* 1024 words = 4096 bytes          */

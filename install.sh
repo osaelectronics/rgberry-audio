@@ -2,7 +2,16 @@
 # RGBerry SCART - audio installer for Raspberry Pi 5
 # Usage:  sudo ./install.sh            install and start
 #         sudo ./install.sh --test     install, then play a 1 kHz test tone (L, then R)
+#         sudo ./install.sh --pi4-alsa also make the SoC PWM card ("Headphones")
+#                                      the default device/mixer on Pi 2..4
 set -e
+TEST=0
+for a in "$@"; do
+    case "$a" in
+        --test) TEST=1 ;;
+        --pi4-alsa) PI4_ALSA=1 ;;
+    esac
+done
 
 RED='\033[1;31m'; GRN='\033[1;32m'; YEL='\033[1;33m'; NC='\033[0m'
 say()  { echo -e "${GRN}==>${NC} $*"; }
@@ -48,6 +57,12 @@ if grep -q "RGBERRY-AUDIO-PI5" /etc/asound.conf 2>/dev/null && [ -e /etc/asound.
     cp -a /etc/asound.conf.rgberry-orig /etc/asound.conf
 fi
 install -D -m 644 config/asound-pi5.conf      /etc/rgberry-audio/asound-pi5.conf
+install -D -m 644 config/asound-pi4.conf      /etc/rgberry-audio/asound-pi4.conf.example
+if [ "$PI4_ALSA" = 1 ]; then
+    install -m 644 config/asound-pi4.conf /etc/rgberry-audio/asound-pi4.conf
+elif [ -e /etc/rgberry-audio/asound-pi4.conf ]; then
+    install -m 644 config/asound-pi4.conf /etc/rgberry-audio/asound-pi4.conf   # keep it enabled, refresh
+fi
 rm -f /etc/modprobe.d/rgberry-audio.conf             # 1.x/2.x loopback card
 [ -e /etc/default/rgberry-audio ] || install -D -m 644 config/rgberry-audio.default /etc/default/rgberry-audio
 install -D -m 755 scripts/rgberry-audio-select /usr/local/sbin/rgberry-audio-select
@@ -92,7 +107,7 @@ if [ $IS_PI5 = 1 ]; then
         { [ -n "$(ls /usr/lib/*/alsa-lib/libasound_module_pcm_rgberry.so 2>/dev/null)" ] || die "no se instalo el plugin ALSA"; }
     [ -n "$(ls /usr/lib/*/alsa-lib/libasound_module_ctl_rgberry.so 2>/dev/null)" ] || die "no se instalo el plugin de mezclador ALSA"
 
-    if [ "$1" = "--test" ]; then
+    if [ "$TEST" = 1 ]; then
         systemctl stop rgberry-audio.service 2>/dev/null || true
         say "Tono de prueba 1 kHz: 3 s por el izquierdo, luego 3 s por el derecho"
         timeout -s INT 3 /usr/local/bin/rgberry-audio -t 1000 --tone-ch L || true
